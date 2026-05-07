@@ -46,6 +46,17 @@ ament_target_dependencies(
   "std_srvs"
 )
 
+add_executable(rubik_sim_controller src/rubik_sim_controller.cpp)
+target_include_directories(rubik_sim_controller PRIVATE ${EIGEN3_INCLUDE_DIRS})
+ament_target_dependencies(
+  rubik_sim_controller
+  "rclcpp"
+  "std_msgs"
+  "visualization_msgs"
+  "geometry_msgs"
+  "std_srvs"
+)
+
 add_executable(ur_cube_controller src/ur_cube_controller.cpp)
 target_include_directories(ur_cube_controller PRIVATE ${EIGEN3_INCLUDE_DIRS})
 ament_target_dependencies(
@@ -78,8 +89,14 @@ ament_target_dependencies(cube_sequencer
   std_msgs
 )
 
-install(TARGETS rubik_sim_node ur_cube_controller cube_vision_node rubik_solver_node cube_sequencer
+install(TARGETS rubik_sim_node ur_cube_controller cube_vision_node rubik_solver_node cube_sequencer rubik_sim_controller
   DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY
+  launch
+  rviz
+  DESTINATION share/${PROJECT_NAME}/
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -50,7 +50,7 @@ private:
 
         trajectory_msgs::msg::JointTrajectory traj;
         traj.joint_names = joints_;
-        traj.header.stamp = this->get_clock()->now(); // CRUCIAL para que el driver lo acepte
+        // traj.header.stamp = this->get_clock()->now();
 
         // Punto inicial: posición actual
         traj.points.push_back(create_global_point(current_positions_, 0.0));
@@ -109,6 +109,7 @@ private:
             target_positions_ = final_point;
             last_command_ = cmd;
             is_moving_ = true;
+            RCLCPP_INFO(this->get_logger(), "Enviando comando");
             publisher_->publish(traj);
         } else {
             RCLCPP_WARN(this->get_logger(), "Comando desconocido o sin secuencia definida: %s", cmd.c_str());
@@ -156,6 +157,8 @@ private:
     trajectory_msgs::msg::JointTrajectoryPoint create_global_point(const std::vector<double>& pos, double time_sec) {
         trajectory_msgs::msg::JointTrajectoryPoint p;
         p.positions = pos;
+        p.velocities = std::vector<double>(6, 0.0); 
+        p.accelerations = std::vector<double>(6, 0.0);
         p.time_from_start = rclcpp::Duration::from_seconds(time_sec);
         return p;
     }

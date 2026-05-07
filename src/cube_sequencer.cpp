@@ -7,7 +7,7 @@
 
 using std::placeholders::_1;
 
-enum Face { U = 0, R, F, D, L, B };
+enum Face { U = 0, R = 1, F = 2, D = 3, L = 4, B = 5 };
 
 class RubikSequencer : public rclcpp::Node {
 public:
@@ -46,8 +46,6 @@ private:
 }
 
     void virtual_X() {
-        // Al rotar en X (horario), el cubo cae hacia adelante:
-        // El nuevo UP era el de ATRÁS, el nuevo FRONT era el de ARRIBA...
         Orientation old = current;
         current.up    = old.back;
         current.front = old.up;
@@ -87,27 +85,29 @@ private:
             else if(target_char == 'D') target_face = D;
             else if(target_char == 'L') target_face = L;
             else if(target_char == 'B') target_face = B;
+            // RCLCPP_INFO(this->get_logger(), "Procesando movimiento: %s (cara objetivo: %d) current: U=%d, R=%d, F=%d, D=%d, L=%d, B=%d", move.c_str(), target_face, current.up, current.right, current.front, current.down, current.left, current.back);
 
             // --- ESTRATEGIA DE BÚSQUEDA ---
             // Queremos que target_face termine en current.down
             if (current.down == target_face) {
-                // Ya está abajo, no hacemos nada
             } 
             else if (current.front == target_face) {
-                full_sequence += "X "; virtual_X_inv();
+                full_sequence += "X' "; virtual_X();
             } 
             else if (current.back == target_face) {
-                full_sequence += "X' "; virtual_X();
+                full_sequence += "X "; virtual_X_inv();
             } 
             else if (current.up == target_face) {
                 full_sequence += "X X "; virtual_X(); virtual_X();
             } 
             else if (current.left == target_face) {
-                full_sequence += "Y "; virtual_Y(); // Según tu corrección, Y lleva L a down
+                full_sequence += "Y "; virtual_Y_inv();
             } 
             else if (current.right == target_face) {
-                full_sequence += "Y' "; virtual_Y_inv();
+                full_sequence += "Y' "; virtual_Y();
             }
+
+            // RCLCPP_INFO(this->get_logger(), "Después de orientar: current: U=%d, R=%d, F=%d, D=%d, L=%d, B=%d", current.up, current.right, current.front, current.down, current.left, current.back);
 
             // Ahora que la cara está en DOWN, giramos las capas superiores (UM)
             // que equivale a girar la cara DOWN.

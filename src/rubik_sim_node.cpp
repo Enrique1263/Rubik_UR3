@@ -1,6 +1,8 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <deque>
+#include <random>
 #include <Eigen/Dense>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -19,26 +21,19 @@ struct Sticker {
 class RubikSimNode : public rclcpp::Node {
 public:
     RubikSimNode() : Node("rubik_sim_node") {
-        // Inicializar resuelto por defecto
         reset_cube();
-
         marker_pub = create_publisher<visualization_msgs::msg::MarkerArray>("/cube_markers", 10);
-
         move_sub = create_subscription<std_msgs::msg::String>(
             "/cube_command", 10, std::bind(&RubikSimNode::handle_move, this, _1));
-
-        // Suscribirse al estado inicial/desordenado
         state_sub = create_subscription<std_msgs::msg::String>(
             "/cube_state_raw", 10, std::bind(&RubikSimNode::handle_state, this, _1));
-
         timer = create_wall_timer(
             std::chrono::milliseconds(30),
             std::bind(&RubikSimNode::update_and_publish, this));
-
         state_service = create_service<std_srvs::srv::Trigger>(
             "/get_cube_state", std::bind(&RubikSimNode::get_state_callback, this, _1, _2));
         
-        RCLCPP_INFO(this->get_logger(), "Simulador Rubik con soporte de estados iniciado.");
+        RCLCPP_INFO(this->get_logger(), "Simulador Rubik iniciado");
     }
 
 private:
@@ -49,15 +44,17 @@ private:
     rclcpp::TimerBase::SharedPtr timer;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr state_service;
 
-    /* ---------- Animación ---------- */
+    /* ---------- Animación y Cola ---------- */
     bool animating = false;
+    bool scramble_mode = false;
+    std::deque<std::string> internal_move_queue;
+    
     Eigen::Vector3i anim_axis;
     std::vector<int> anim_layers;
     float anim_angle = 0;
-    float anim_speed = 0.15;
+    float anim_speed_normal = 0.15;
+    float anim_speed_fast = 0.6;
     bool anim_cw = true;
-
-    /* ---------- Lógica de Estado ---------- */
 
     void apply_state_string(std::string s) {
         stickers.clear();
@@ -74,8 +71,8 @@ private:
             switch (face) {
                 case 0: // U: Arriba: -Y, Derecha: X
                     pos = {a, b, 1};    normal = {0, 0, 1}; break;
-                case 1: // R: Arriba: Z, Derecha: -Y  <-- CORREGIDO
-                    pos = {1, -a, b};   normal = {1, 0, 0}; break;
+                case 1: // R: Arriba: Z, Derecha: -Y
+                    pos = {1, a, b};   normal = {1, 0, 0}; break;
                 case 2: // F: Arriba: Z, Derecha: X
                     pos = {a, -1, b};   normal = {0, -1, 0}; break;
                 case 3: // D: Arriba: Y, Derecha: X
@@ -90,25 +87,57 @@ private:
     }
 
     void handle_state(const std_msgs::msg::String::SharedPtr msg) {
-        if (msg->data.length() != 54) {
-            RCLCPP_ERROR(this->get_logger(), "Estado inválido: se esperan 54 caracteres.");
-            return;
-        }
-        apply_state_string(msg->data);
+        if (msg->data.length() == 54) apply_state_string(msg->data);
     }
 
     void reset_cube() {
         std::string solved = "";
         for (char c : {'U', 'R', 'F', 'D', 'L', 'B'}) solved += std::string(9, c);
         apply_state_string(solved);
+        internal_move_queue.clear();
     }
 
-    /* ---------- Rotación Lógica ---------- */
+    void generate_random_moves(int count) {
+        // Reiniciamos el generador para asegurar aleatoriedad real
+        std::random_device rd;
+        std::mt19937 gen(rd());
+
+        // Definimos los movimientos
+        std::vector<std::string> moves = {"UM", "UM'", "X", "X'", "Y", "Y'"};
+        
+        std::vector<double> weights = {3.0, 3.0, 2.0, 2.0, 2.0, 2.0};
+        std::discrete_distribution<> dis(weights.begin(), weights.end());
+
+        std::string last_move = "";
+
+        for(int i = 0; i < count; ++i) {
+            std::string current_move;
+            bool valid = false;
+
+            while (!valid) {
+                current_move = moves[dis(gen)];
+                if (last_move.empty()) {
+                    valid = true;
+                } else {
+                    bool is_inverse = false;
+                    if (current_move[0] == last_move[0]) {
+                        if (current_move.size() != last_move.size()) {
+                            is_inverse = true;
+                        }
+                    }
+                    if (!is_inverse) valid = true;
+                }
+            }
+            internal_move_queue.push_back(current_move);
+            last_move = current_move;
+        }
+        scramble_mode = true;
+        // RCLCPP_INFO(this->get_logger(), "Cola de RANDOM generada con %d movimientos.", count);
+    }
 
     void rotate_layer(Eigen::Vector3i axis, int layer, bool cw) {
         float angle = cw ? -M_PI_2 : M_PI_2;
         Eigen::Matrix3f R = Eigen::AngleAxisf(angle, axis.cast<float>().normalized()).toRotationMatrix();
-
         for (auto &s : stickers) {
             if (axis.dot(s.pos) == layer) {
                 Eigen::Vector3f p = R * s.pos.cast<float>();
@@ -119,31 +148,59 @@ private:
         }
     }
 
-    /* ---------- Comandos y Animación ---------- */
-
-    void start_animation(Eigen::Vector3i axis, std::vector<int> layers, bool cw) {
+    void start_animation(std::string cmd) {
         if (animating) return;
         animating = true;
-        anim_axis = axis;
-        anim_layers = layers;
         anim_angle = 0;
-        anim_cw = cw;
+
+        if (cmd == "UM")       { anim_axis = {0,0,1}; anim_layers = {1,0}; anim_cw = true; }
+        else if (cmd == "UM'") { anim_axis = {0,0,1}; anim_layers = {1,0}; anim_cw = false; }
+        else if (cmd == "X")    { anim_axis = {1,0,0}; anim_layers = {1,0,-1}; anim_cw = true; }
+        else if (cmd == "X'")   { anim_axis = {1,0,0}; anim_layers = {1,0,-1}; anim_cw = false; }
+        else if (cmd == "Y")    { anim_axis = {0,1,0}; anim_layers = {1,0,-1}; anim_cw = true; }
+        else if (cmd == "Y'")   { anim_axis = {0,1,0}; anim_layers = {1,0,-1}; anim_cw = false; }
     }
 
     void handle_move(const std_msgs::msg::String::SharedPtr msg) {
-        std::string c = msg->data;
-        if (c == "UM")        start_animation({0, 0, 1}, {1, 0}, true);
-        else if (c == "UM'")  start_animation({0, 0, 1}, {1, 0}, false);
-        else if (c == "X")    start_animation({1, 0, 0}, {1, 0, -1}, true);
-        else if (c == "X'")   start_animation({1, 0, 0}, {1, 0, -1}, false);
-        else if (c == "Y")    start_animation({0, 1, 0}, {1, 0, -1}, true);
-        else if (c == "Y'")   start_animation({0, 1, 0}, {1, 0, -1}, false);
-        else if (c == "RESET") reset_cube();
+        std::string cmd = msg->data;
+        
+        if (cmd == "RESET") { 
+            reset_cube(); 
+            return; 
+        }
+        
+        if (cmd == "RANDOM") { 
+            generate_random_moves(30); 
+            // Si no hay nada animándose ahora mismo, forzamos el inicio
+            if (!animating && !internal_move_queue.empty()) {
+                start_animation(internal_move_queue.front());
+                internal_move_queue.pop_front();
+            }
+            return; 
+        }
+        
+        // Para comandos normales (UM, X, etc.)
+        if (!animating && internal_move_queue.empty()) {
+            start_animation(cmd);
+        } else {
+            internal_move_queue.push_back(cmd);
+        }
     }
 
     void update_animation() {
-        if (!animating) return;
-        anim_angle += anim_speed;
+        if (!animating) {
+            if (!internal_move_queue.empty()) {
+                start_animation(internal_move_queue.front());
+                internal_move_queue.pop_front();
+            } else {
+                scramble_mode = false;
+            }
+            return;
+        }
+
+        float current_speed = scramble_mode ? anim_speed_fast : anim_speed_normal;
+        anim_angle += current_speed;
+
         if (anim_angle >= M_PI_2) {
             for (int l : anim_layers) rotate_layer(anim_axis, l, anim_cw);
             animating = false;
@@ -169,7 +226,6 @@ private:
         float cubie = 0.05; float gap = 0.052; float sticker = 0.006;
         int id = 0;
 
-        // --- Dibujar Cubies (Base Negra) ---
         for (int x = -1; x <= 1; x++)
         for (int y = -1; y <= 1; y++)
         for (int z = -1; z <= 1; z++) {
@@ -315,7 +371,7 @@ private:
                 } else if (normal.y() == 1) {  // BACK
                     u = 1 - s.pos.x(); v = 1 - s.pos.z();
                 } else if (normal.x() == 1) {  // RIGHT
-                    u = 1 - s.pos.y(); v = 1 - s.pos.z(); // <-- CORREGIDO: u depende de -y
+                    u = s.pos.y() + 1; v = 1 - s.pos.z();
                 } else if (normal.x() == -1) { // LEFT
                     u = 1 - s.pos.y(); v = 1 - s.pos.z();
                 }

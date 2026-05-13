@@ -35,6 +35,8 @@ public:
         command_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/cube_command", 10, std::bind(&URCubeController::handle_command, this, _1));
 
+        script_pub_ = this->create_publisher<std_msgs::msg::String>("/urscript_interface/script_command", 10);
+
         RCLCPP_INFO(this->get_logger(), "Controlador Global listo. Esperando comandos en /cube_command...");
     }
 
@@ -100,6 +102,14 @@ private:
             final_point = {0.0, -1.90, 0.0, -1.57, -1.57, 0.0};
             traj.points.push_back(create_global_point(final_point, step_time * 1));
         }
+        else if (cmd == "OPEN") {
+            actuate_gripper(true);
+            return; // No publicamos una trayectoria para este comando
+        }
+        else if (cmd == "CLOSE") {
+            actuate_gripper(false);
+            return; // No publicamos una trayectoria para este comando
+        }
         else {
             RCLCPP_WARN(this->get_logger(), "Comando desconocido: %s", cmd.c_str());
             return;
@@ -154,6 +164,31 @@ private:
         }
     }
 
+    void actuate_gripper(bool open) {
+        auto msg_pin0 = std_msgs::msg::String();
+        auto msg_pin1 = std_msgs::msg::String();
+
+        if (open) {
+            // Secuencia para ABRIR: Pin 0 -> 0V, Pin 1 -> 24V
+            msg_pin0.data = "set_tool_digital_out(0, False)";
+            msg_pin1.data = "set_tool_digital_out(1, True)";
+            RCLCPP_INFO(this->get_logger(), "Comando: ABRIENDO pinza...");
+        } else {
+            // Secuencia para CERRAR: Pin 0 -> 24V, Pin 1 -> 0V
+            msg_pin0.data = "set_tool_digital_out(0, True)";
+            msg_pin1.data = "set_tool_digital_out(1, False)";
+            RCLCPP_INFO(this->get_logger(), "Comando: CERRANDO pinza...");
+        }
+
+        // Publicamos los comandos al tópico de URScript
+        script_pub_->publish(msg_pin0);
+        
+        // Pequeña pausa para no saturar el intérprete de script del robot
+        rclcpp::sleep_for(std::chrono::milliseconds(50));
+        
+        script_pub_->publish(msg_pin1);
+    }
+
     trajectory_msgs::msg::JointTrajectoryPoint create_global_point(const std::vector<double>& pos, double time_sec) {
         trajectory_msgs::msg::JointTrajectoryPoint p;
         p.positions = pos;
@@ -175,6 +210,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr command_sub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr script_pub_;
 };
 
 int main(int argc, char** argv) {

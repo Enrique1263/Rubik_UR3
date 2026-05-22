@@ -19,6 +19,7 @@ find_package(trajectory_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(ur_msgs REQUIRED)
 
 file(GLOB KOCIEMBA_SOURCES "src/libkociemba/*.c")
 
@@ -69,6 +70,7 @@ ament_target_dependencies(
   "trajectory_msgs"
   "visualization_msgs"
   "geometry_msgs"
+  "ur_msgs"
 )
 
 add_executable(cube_vision_node src/cube_vision_node.cpp)
@@ -95,6 +97,7 @@ install(TARGETS rubik_sim_node ur_cube_controller cube_vision_node rubik_solver_
 install(DIRECTORY
   launch
   rviz
+  imagenes
   DESTINATION share/${PROJECT_NAME}/
 )
 

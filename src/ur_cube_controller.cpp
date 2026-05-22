@@ -7,6 +7,8 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
+#include "ur_msgs/srv/set_io.hpp"
+
 
 using std::placeholders::_1;
 
@@ -35,7 +37,7 @@ public:
         command_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/cube_command", 10, std::bind(&URCubeController::handle_command, this, _1));
 
-        script_pub_ = this->create_publisher<std_msgs::msg::String>("/urscript_interface/script_command", 10);
+        io_client_ = this->create_client<ur_msgs::srv::SetIO>("/io_and_status_controller/set_io");
 
         RCLCPP_INFO(this->get_logger(), "Controlador Global listo. Esperando comandos en /cube_command...");
     }
@@ -57,7 +59,7 @@ private:
         // Punto inicial: posición actual
         traj.points.push_back(create_global_point(current_positions_, 0.0));
 
-        double step_time = 2.0; 
+        double step_time = 1.0; 
         std::vector<double> final_point; // Para guardar el último punto de la secuencia
 
         if (cmd == "UM") {
@@ -73,8 +75,9 @@ private:
             traj.points.push_back(create_global_point(final_point, step_time * 3));
         }
         else if (cmd == "X") {
-            traj.points.push_back(create_global_point({0.1, -1.4, 0.8, -0.8, 1.5, 0.0}, step_time * 1));
-            final_point = {0.1, -1.4, 0.8, -0.8, 1.5, 1.57};
+            actuate_gripper(true);
+            traj.points.push_back(create_global_point({-3.141767186515, -1.8181094818025, -1.4114477660878, -1.4830062654196, 1.5707963267949, 0.034906585039887}, step_time * 1));
+            final_point = {-3.14229079, -1.87326189, -1.62926486, -1.21003677, 1.57044726, 0.0347320521};
             traj.points.push_back(create_global_point(final_point, step_time * 2));
         }
         else if (cmd == "X'") {
@@ -95,12 +98,13 @@ private:
             traj.points.push_back(create_global_point(final_point, step_time * 2));
         }
         else if (cmd == "PICTURE") {
-            final_point = {-4.03, -1.83, -1.64, -1.23, 2.41, 4.72};
-            traj.points.push_back(create_global_point(final_point, step_time * 1));
+            traj.points.push_back(create_global_point({-3.5657076618, -1.75405589825, -1.4498450096, -1.4498450096, 1.8760544129, 0.601689526}, 3.0));
+            final_point = {-4.01530448, -1.86139365, -1.83050132, -1.123643, 2.50437294, 4.67975132};
+            traj.points.push_back(create_global_point(final_point, 5.0));
         }
         else if (cmd == "SAFE") {
-            final_point = {0.0, -1.90, 0.0, -1.57, -1.57, 0.0};
-            traj.points.push_back(create_global_point(final_point, step_time * 1));
+            final_point = {-3.14, -1.57, 0.0, -1.57, 3.14, 0.0};
+            traj.points.push_back(create_global_point(final_point, 5.0));
         }
         else if (cmd == "OPEN") {
             actuate_gripper(true);
@@ -165,28 +169,18 @@ private:
     }
 
     void actuate_gripper(bool open) {
-        auto msg_pin0 = std_msgs::msg::String();
-        auto msg_pin1 = std_msgs::msg::String();
+        auto req0 = std::make_shared<ur_msgs::srv::SetIO::Request>();
+        req0->fun = 1;    // En CB3, a veces fun=1 (Digital Out) con pin 8/9 mapea a la herramienta
+        req0->pin = 16;    // Prueba con pin 8 (Tool Out 0)
+        req0->state = open ? 0.0 : 1.0;
 
-        if (open) {
-            // Secuencia para ABRIR: Pin 0 -> 0V, Pin 1 -> 24V
-            msg_pin0.data = "set_tool_digital_out(0, False)";
-            msg_pin1.data = "set_tool_digital_out(1, True)";
-            RCLCPP_INFO(this->get_logger(), "Comando: ABRIENDO pinza...");
-        } else {
-            // Secuencia para CERRAR: Pin 0 -> 24V, Pin 1 -> 0V
-            msg_pin0.data = "set_tool_digital_out(0, True)";
-            msg_pin1.data = "set_tool_digital_out(1, False)";
-            RCLCPP_INFO(this->get_logger(), "Comando: CERRANDO pinza...");
-        }
+        auto req1 = std::make_shared<ur_msgs::srv::SetIO::Request>();
+        req1->fun = 1;
+        req1->pin = 17;    // Prueba con pin 9 (Tool Out 1)
+        req1->state = open ? 1.0 : 0.0;
 
-        // Publicamos los comandos al tópico de URScript
-        script_pub_->publish(msg_pin0);
-        
-        // Pequeña pausa para no saturar el intérprete de script del robot
-        rclcpp::sleep_for(std::chrono::milliseconds(50));
-        
-        script_pub_->publish(msg_pin1);
+        io_client_->async_send_request(req0);
+        io_client_->async_send_request(req1);
     }
 
     trajectory_msgs::msg::JointTrajectoryPoint create_global_point(const std::vector<double>& pos, double time_sec) {
@@ -211,6 +205,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr command_sub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr script_pub_;
+    rclcpp::Client<ur_msgs::srv::SetIO>::SharedPtr io_client_;
 };
 
 int main(int argc, char** argv) {

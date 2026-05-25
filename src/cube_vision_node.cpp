@@ -251,7 +251,7 @@ private:
 
             case Stage::MovingToX1:
                 stage_ = Stage::MovingToY;
-                send_robot_command("Y");
+                send_robot_command("Y'");
                 break;
 
             case Stage::MovingToY:
